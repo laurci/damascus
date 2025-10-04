@@ -1,0 +1,15 @@
+[package]
+name = "damascus"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+resolver = "2"
+members = [".", "meta"]
+
+[dependencies]
+anyhow = "1.0.100"
+damascus-meta = { path = "meta" }
+schemars = "1.0.4"
+serde_json = "1.0.145"
+thiserror = "2.0.9"
