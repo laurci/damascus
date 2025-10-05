@@ -182,24 +182,40 @@ pub fn generate_api_client(writer: &mut CodeWriter, aat: &AAT) -> Result<()> {
                     HeaderValue::Literal(value) => {
                         w.line(&format!("serviceHeaders['{}'] = '{}';", header.name, value));
                     }
-                    HeaderValue::Parameter { name, .. } => {
-                        w.line(&format!(
-                            "serviceHeaders['{}'] = String({});",
-                            header.name, name
-                        ));
+                    HeaderValue::Parameter { name, field_type } => {
+                        let is_optional = matches!(field_type, FieldType::Optional(_));
+                        if is_optional {
+                            w.line(&format!(
+                                "if ({} !== undefined) serviceHeaders['{}'] = String({});",
+                                name, header.name, name
+                            ));
+                        } else {
+                            w.line(&format!(
+                                "serviceHeaders['{}'] = String({});",
+                                header.name, name
+                            ));
+                        }
                     }
                     HeaderValue::Pattern {
                         pattern,
                         param_name,
-                        ..
+                        field_type,
                     } => {
+                        let is_optional = matches!(field_type, FieldType::Optional(_));
                         let placeholder = format!("{{{}}}", param_name);
                         let pattern_expr =
                             pattern.replace(&placeholder, &format!("${{String({})}}", param_name));
-                        w.line(&format!(
-                            "serviceHeaders['{}'] = `{}`;",
-                            header.name, pattern_expr
-                        ));
+                        if is_optional {
+                            w.line(&format!(
+                                "if ({} !== undefined) serviceHeaders['{}'] = `{}`;",
+                                param_name, header.name, pattern_expr
+                            ));
+                        } else {
+                            w.line(&format!(
+                                "serviceHeaders['{}'] = `{}`;",
+                                header.name, pattern_expr
+                            ));
+                        }
                     }
                 }
             }
@@ -225,9 +241,33 @@ pub fn generate_service(writer: &mut CodeWriter, service: &Service) -> Result<()
 
     let class_name = to_pascal_case(&service.name);
     writer
-        .block(&format!("class {}Client {{", class_name), "}", |w| {
+        .block(&format!("export class {}Client {{", class_name), "}", |w| {
             // Constructor
             w.line("constructor(private baseUrl: string, private rootHeaders: Record<string, string>, private serviceHeaders: Record<string, string>, private options: RequestInit | undefined, private fetchImpl: typeof fetch, private WebSocketImpl: typeof WebSocket) {}");
+            w.empty_line();
+
+            // Add private helper method for merging headers
+            w.block("private mergeHeaders(endpointHeaders: Record<string, string>): Record<string, string> {", "}", |w| {
+                w.line("const optionsHeaders: Record<string, string> = {};");
+                w.block("if (this.options?.headers) {", "}", |w| {
+                    w.block("if (this.options.headers instanceof Headers) {", "}", |w| {
+                        w.line("this.options.headers.forEach((value, key) => { optionsHeaders[key] = value; });");
+                    });
+                    w.line("else if (Array.isArray(this.options.headers)) {");
+                    w.indent();
+                    w.block("for (const [key, value] of this.options.headers) {", "}", |w| {
+                        w.line("optionsHeaders[key] = value;");
+                    });
+                    w.dedent();
+                    w.line("}");
+                    w.line("else {");
+                    w.indent();
+                    w.line("Object.assign(optionsHeaders, this.options.headers);");
+                    w.dedent();
+                    w.line("}");
+                });
+                w.line("return { ...this.rootHeaders, ...this.serviceHeaders, ...endpointHeaders, ...optionsHeaders };");
+            });
             w.empty_line();
 
             // Write pre-generated methods
@@ -348,19 +388,29 @@ fn generate_endpoint_method_inner(w: &mut CodeWriter, endpoint: &Endpoint) -> Re
                 HeaderValue::Literal(value) => {
                     w.line(&format!("endpointHeaders['{}'] = '{}';", header.name, value));
                 }
-                HeaderValue::Parameter { name, .. } => {
-                    w.line(&format!("endpointHeaders['{}'] = String({});", header.name, name));
+                HeaderValue::Parameter { name, field_type } => {
+                    let is_optional = matches!(field_type, FieldType::Optional(_));
+                    if is_optional {
+                        w.line(&format!("if ({} !== undefined) endpointHeaders['{}'] = String({});", name, header.name, name));
+                    } else {
+                        w.line(&format!("endpointHeaders['{}'] = String({});", header.name, name));
+                    }
                 }
-                HeaderValue::Pattern { pattern, param_name, .. } => {
+                HeaderValue::Pattern { pattern, param_name, field_type } => {
+                    let is_optional = matches!(field_type, FieldType::Optional(_));
                     let placeholder = format!("{{{}}}", param_name);
                     let pattern_expr = pattern.replace(&placeholder, &format!("${{String({})}}", param_name));
-                    w.line(&format!("endpointHeaders['{}'] = `{}`;", header.name, pattern_expr));
+                    if is_optional {
+                        w.line(&format!("if ({} !== undefined) endpointHeaders['{}'] = `{}`;", param_name, header.name, pattern_expr));
+                    } else {
+                        w.line(&format!("endpointHeaders['{}'] = `{}`;", header.name, pattern_expr));
+                    }
                 }
             }
         }
 
-        // Merge all headers
-        w.line("const mergedHeaders = { ...this.rootHeaders, ...this.serviceHeaders, ...endpointHeaders, ...this.options?.headers };");
+        // Merge all headers using helper method
+        w.line("const mergedHeaders = this.mergeHeaders(endpointHeaders);");
         w.empty_line();
 
         // Build path
