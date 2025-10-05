@@ -7,6 +7,7 @@
 
   [![Rust](https://img.shields.io/badge/rust-2024-orange.svg)](https://www.rust-lang.org)
   [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+  [![Ask DeepWiki](https://deepwiki.com/badge.svg)](https://deepwiki.com/laurci/damascus)
 
 </div>
 
