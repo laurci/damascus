@@ -11,6 +11,12 @@ use damascus::{
 use damascus_meta::header_value;
 
 #[derive(JsonSchema)]
+enum Machine {
+    #[serde(rename = "machine.v1")]
+    V1(MachineV1),
+}
+
+#[derive(JsonSchema)]
 struct MachineV1 {
     name: String,
     namespace: Option<String>,
@@ -251,7 +257,7 @@ fn main() {
                     },
                 )
                 .put("apply", path!("machines"), |endpoint| {
-                    endpoint.body(type_of!(MachineV1))
+                    endpoint.body(type_of!(Machine))
                 })
                 .delete("delete", path!("machines", name: String), |endpoint| {
                     endpoint.header("x-ignition-namespace", header_value!(namespace: String))

@@ -90,3 +90,37 @@ pub fn to_camel_case(s: &str) -> String {
     }
     result
 }
+
+/// Checks if a string is a valid TypeScript identifier
+/// Returns true if it can be used unquoted as a property name
+pub fn is_valid_ts_identifier(s: &str) -> bool {
+    if s.is_empty() {
+        return false;
+    }
+
+    let mut chars = s.chars();
+
+    // First character must be letter, underscore, or dollar sign
+    match chars.next() {
+        Some(c) if c.is_alphabetic() || c == '_' || c == '$' => {}
+        _ => return false,
+    }
+
+    // Remaining characters must be alphanumeric, underscore, or dollar sign
+    for c in chars {
+        if !c.is_alphanumeric() && c != '_' && c != '$' {
+            return false;
+        }
+    }
+
+    true
+}
+
+/// Quotes a string if it's not a valid TypeScript identifier
+pub fn quote_if_needed(s: &str) -> String {
+    if is_valid_ts_identifier(s) {
+        s.to_string()
+    } else {
+        format!("\"{}\"", s)
+    }
+}

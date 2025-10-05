@@ -4,6 +4,12 @@ use anyhow::Result;
 
 use super::utils::*;
 
+/// Check if a field type is a reference (either directly or wrapped in Optional)
+fn is_reference_type(field_type: &FieldType) -> bool {
+    matches!(field_type, FieldType::Reference(_)) ||
+    matches!(field_type, FieldType::Optional(inner) if matches!(&**inner, FieldType::Reference(_)))
+}
+
 pub fn generate_type(writer: &mut CodeWriter, named_type: &NamedType) -> Result<()> {
     match named_type {
         NamedType::Object(obj) => generate_object_type(writer, obj),
@@ -54,10 +60,11 @@ fn generate_object_type(writer: &mut CodeWriter, obj: &ObjectType) -> Result<()>
     writer
         .block_with_newline(&format!("export interface {} {{", obj.name), "}", |w| {
             for (name, ts_type, _, is_optional) in fields {
+                let quoted_name = quote_if_needed(&name);
                 if is_optional {
-                    w.line(&format!("{}?: {};", name, ts_type));
+                    w.line(&format!("{}?: {};", quoted_name, ts_type));
                 } else {
-                    w.line(&format!("{}: {};", name, ts_type));
+                    w.line(&format!("{}: {};", quoted_name, ts_type));
                 }
             }
         });
@@ -104,25 +111,53 @@ fn generate_union_type(writer: &mut CodeWriter, union: &UnionType) -> Result<()>
                             field.name
                         );
                     }
+                    let quoted_field_name = quote_if_needed(&field_name);
                     if is_optional {
-                        parts.push(format!("{}?: {}", field_name, field_type));
+                        parts.push(format!("{}?: {}", quoted_field_name, field_type));
                     } else {
-                        parts.push(format!("{}: {}", field_name, field_type));
+                        parts.push(format!("{}: {}", quoted_field_name, field_type));
                     }
                 }
-                writer
-                    .line(&format!("{{ {} }}{}", parts.join(", "), separator));
+
+                // Determine how to represent this variant
+                if let Some(variant_name) = &variant.name {
+                    let quoted_variant_name = quote_if_needed(variant_name);
+
+                    // Check if this is a newtype pattern (single field that is a reference)
+                    let is_newtype = obj.fields.len() == 1 && is_reference_type(&obj.fields[0].r#type);
+
+                    // Check if this is a tuple variant (single field with same name as variant)
+                    // This indicates a Rust tuple enum variant that should be flattened
+                    let is_tuple_variant = obj.fields.len() == 1 &&
+                                          obj.fields[0].name == *variant_name;
+
+                    if is_newtype {
+                        // Newtype pattern: wrap with variant name
+                        let field = &obj.fields[0];
+                        let field_type = field_type_to_ts(&field.r#type);
+                        writer.line(&format!("{{ {}: {} }}{}", quoted_variant_name, field_type, separator));
+                    } else if is_tuple_variant {
+                        // Tuple variant: flatten completely (remove variant name wrapper)
+                        writer.line(&format!("{{ {} }}{}", parts.join(", "), separator));
+                    } else {
+                        // Regular struct variant: wrap with variant name
+                        let inner_obj = format!("{{ {} }}", parts.join(", "));
+                        writer.line(&format!("{{ {}: {} }}{}", quoted_variant_name, inner_obj, separator));
+                    }
+                } else {
+                    // No variant name: use fields directly
+                    writer.line(&format!("{{ {} }}{}", parts.join(", "), separator));
+                }
             }
             UnionTypeVariantMode::Literal(lit) => {
-                let lit_str = literal_to_ts_with_camel(lit);
+                let lit_str = literal_to_ts(lit);
                 if let LiteralType::String(s) = lit {
-                    let camel = to_camel_case(s);
-                    if !seen_literals.insert(camel.clone()) {
+                    // Still check for duplicates with original string values
+                    if !seen_literals.insert(s.clone()) {
                         anyhow::bail!(
-                            "Duplicate literal variant '{}' in union type '{}' after camelCase conversion (original: '{}')",
-                            camel,
-                            union.name,
-                            s
+                            "Duplicate literal variant '{}' in union type '{}'",
+                            s,
+                            union.name
                         );
                     }
                 }
@@ -150,15 +185,14 @@ fn generate_enum_type(writer: &mut CodeWriter, enum_type: &EnumType) -> Result<(
             " |"
         };
 
-        let lit_str = literal_to_ts_with_camel(&variant.value);
+        let lit_str = literal_to_ts(&variant.value);
         if let LiteralType::String(s) = &variant.value {
-            let camel = to_camel_case(s);
-            if !seen.insert(camel.clone()) {
+            // Still check for duplicates with original string values
+            if !seen.insert(s.clone()) {
                 anyhow::bail!(
-                    "Duplicate enum variant '{}' in enum type '{}' after camelCase conversion (original: '{}')",
-                    camel,
-                    enum_type.name,
-                    s
+                    "Duplicate enum variant '{}' in enum type '{}'",
+                    s,
+                    enum_type.name
                 );
             }
         }
