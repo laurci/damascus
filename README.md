@@ -1,0 +1,278 @@
+<div align="center">
+  <img src="assets/damascus_logo.png" alt="Damascus Logo" width="200"/>
+
+  # Damascus
+
+  **Type-safe API specifications in Rust**
+
+  [![Rust](https://img.shields.io/badge/rust-2024-orange.svg)](https://www.rust-lang.org)
+  [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+</div>
+
+## Overview
+
+Damascus is a universal API specification toolkit that converts between different API formats and generates client SDKs, documentation, and more. At its core is the **AAT (Abstract API Tree)** — a normalized intermediate representation that bridges the gap between various API specification formats.
+
+**Key Features:**
+
+- **Multiple input sources** — Import from Rust DSL, OpenAPI, AsyncAPI, and more
+- **Universal intermediate format** — AAT normalizes all specs into a consistent structure
+- **Type-safe Rust DSL** — Define APIs with full compile-time type safety
+- **Schema support** — Built on `schemars` for JSON Schema compatibility
+- **WebSocket support** — First-class support for streaming and WebSocket upgrades
+- **Extensible** — Easy to add new input converters and output generators
+- **Code generation** — Generate TypeScript clients (more languages coming soon)
+
+## Installation
+
+Add Damascus to your `Cargo.toml`:
+
+```toml
+[dependencies]
+damascus = "0.1.0"
+```
+
+## Quick Start
+
+Here's a simple example defining a math API:
+
+```rust
+use damascus::{JsonSchema, aat::AAT, path, spec::Spec, type_of};
+
+#[derive(JsonSchema)]
+struct Input {
+    a: u32,
+    b: u32,
+}
+
+#[derive(JsonSchema)]
+struct Output {
+    result: u32,
+}
+
+#[derive(JsonSchema)]
+enum Operation {
+    Add,
+    Subtract,
+}
+
+fn main() {
+    let spec = Spec::new("math-api")
+        .description("A simple math API")
+        .service("math", |service| {
+            service.post(
+                "operation",
+                path!("math", operation: Operation),
+                |endpoint| {
+                    endpoint
+                        .body(type_of!(Input))
+                        .response(type_of!(Output))
+                }
+            )
+        });
+
+    // Convert to Abstract API Tree (AAT)
+    let aat = AAT::from_spec(&spec).unwrap();
+
+    // Validate all type references
+    aat.validate().unwrap();
+
+    // Generate TypeScript client
+    let typescript = damascus::generate::typescript::TypeScriptGenerator::generate(&aat).unwrap();
+    std::fs::write("client.ts", typescript).unwrap();
+}
+```
+
+## How It Works
+
+Damascus uses a universal conversion pipeline with AAT at its core:
+
+```
+┌─────────────┐
+│  Rust DSL   │───┐
+└─────────────┘   │
+                  │     ┌─────┐      ┌──────────────┐
+┌─────────────┐   ├──→  │ AAT │  →   │  TypeScript  │
+│  OpenAPI    │───┤     │     │      │    Client    │
+└─────────────┘   │     └─────┘      └──────────────┘
+                  │        │
+┌─────────────┐   │        ├──────→  ┌──────────────┐
+│  AsyncAPI   │───┘        │         │ Rust Client  │
+└─────────────┘            │         └──────────────┘
+                           │
+    (coming soon)          ├──────→  ┌──────────────┐
+                           │         │ Python Client│
+                           │         └──────────────┘
+                           │
+                           └──────→  ┌──────────────┐
+                                     │     Docs     │
+                                     └──────────────┘
+
+                                     (coming soon)
+```
+
+1. **Input Converters**: Transform various API formats into AAT
+   - Rust DSL (available now)
+   - OpenAPI (planned)
+   - AsyncAPI (planned)
+   - And more...
+
+2. **AAT (Abstract API Tree)**: Normalized intermediate representation
+   - Consistent type system
+   - Validation and type checking
+   - Universal format for all generators
+
+3. **Client & Documentation Generators**: Generate from AAT
+   - TypeScript clients (available now)
+   - Rust clients (planned)
+   - Python clients (planned)
+   - Interactive documentation (planned)
+   - And more...
+
+## Features
+
+### Type-Safe Path Parameters
+
+```rust
+service.get("user", path!("users", user_id: String), |endpoint| {
+    endpoint.response(type_of!(User))
+})
+```
+
+### Request Bodies and Responses
+
+```rust
+endpoint
+    .body(type_of!(CreateUserRequest))
+    .response(type_of!(User))
+```
+
+### Query Parameters
+
+```rust
+endpoint
+    .query(type_of!(SearchQuery))
+    .response(type_of!(Vec<User>))
+```
+
+### Custom Headers
+
+```rust
+Spec::new("api")
+    .header("x-api-version", header_value!("1.0"))
+    .header("authorization", header_value!("Bearer {token}" use token: String))
+```
+
+### WebSocket Streaming
+
+```rust
+endpoint
+    .response(type_of!(Log).wrap_stream())
+    .upgrade(Upgrade::Ws)
+```
+
+### Complex Types
+
+Damascus supports:
+- Primitives (bool, int, float, string)
+- Optional types
+- Lists and maps
+- Tuples and named tuples
+- Enums and unions
+- Nested objects
+- Streaming types
+
+## Generated TypeScript Example
+
+Damascus generates clean, idiomatic TypeScript with full type safety:
+
+```typescript
+// Generated by Damascus
+// Do not edit this file directly
+
+export interface MachineV1 {
+  name: string;
+  namespace?: string;
+  image?: string;
+  resources: MachineResources;
+}
+
+export interface MachineResources {
+  cpu: number;
+  memory: number;
+}
+
+export class MachinesClient {
+  constructor(private baseUrl: string) {}
+
+  async get(name: string, namespace: string): Promise<[MachineV1, Status]> {
+    // ... generated implementation
+  }
+
+  async list(namespace?: string): Promise<Array<[MachineV1, Status]>> {
+    // ... generated implementation
+  }
+}
+```
+
+## Examples
+
+Check out the [`examples/`](examples/) directory for more:
+
+- [`simple.rs`](examples/simple.rs) — Basic API definition
+- [`ignition.rs`](examples/ignition.rs) — Complex real-world API with streaming
+
+Run examples with:
+
+```bash
+cargo run --example simple
+cargo run --example ignition
+```
+
+## Project Structure
+
+```
+damascus/
+├── src/
+│   ├── spec.rs           # DSL builder API
+│   ├── aat/              # Abstract API Tree
+│   ├── generate/         # Code generators
+│   │   └── typescript/   # TypeScript generator
+│   └── meta.rs           # Utility macros
+├── meta/                 # Procedural macros (separate crate)
+│   └── src/
+│       ├── path.rs       # path!() macro
+│       └── header.rs     # header_value!() macro
+└── examples/             # Example specifications
+```
+
+## Roadmap
+
+### Input Converters
+- [x] Rust DSL
+- [ ] OpenAPI 3.0 import
+- [ ] AsyncAPI import
+
+### Client & Documentation Generators
+- [x] TypeScript client generation
+- [ ] Rust client generation
+- [ ] Python client generation
+- [ ] Go client generation
+- [ ] Java/Kotlin client generation
+- [ ] Interactive documentation
+- [ ] Markdown documentation
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## License
+
+This project is licensed under the MIT License.
+
+---
+
+<div align="center">
+  Built with ❤️ in Rust
+</div>
