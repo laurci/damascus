@@ -1,7 +1,7 @@
+use super::types::*;
 use anyhow::{Result, bail};
 use schemars::Schema;
 use serde_json::{Map, Value};
-use super::types::*;
 
 pub fn schema_to_type(schema: &Schema, name: &str) -> Result<NamedType> {
     // Check if it's a bool schema
@@ -23,9 +23,12 @@ pub fn schema_to_type(schema: &Schema, name: &str) -> Result<NamedType> {
         return schema_to_enum_type(name, enum_values, obj);
     }
 
-    // Check if this is a union (has oneOf)
+    // Check if this is a union (has oneOf or anyOf)
     if let Some(Value::Array(one_of)) = obj.get("oneOf") {
         return schema_to_union_type(name, one_of, obj);
+    }
+    if let Some(Value::Array(any_of)) = obj.get("anyOf") {
+        return schema_to_union_type(name, any_of, obj);
     }
 
     // Otherwise treat as an object
@@ -82,72 +85,82 @@ fn schema_to_union_type(
         None
     };
 
-    let variants: Result<Vec<UnionTypeVariant>> = one_of
-        .iter()
-        .enumerate()
-        .map(|(idx, variant_value)| {
-            // Convert to Schema
-            let variant_schema = Schema::try_from(variant_value.clone())
-                .map_err(|_| anyhow::anyhow!("Invalid schema in oneOf"))?;
+    let mut all_variants = Vec::new();
 
-            if let Some(variant_obj) = variant_schema.as_object() {
-                // Try to get a name from the title, or if it's an object with a single
-                // required property, use that property name
-                let variant_name =
-                    if let Some(title) = variant_obj.get("title").and_then(|v| v.as_str()) {
-                        title.to_string()
-                    } else if variant_obj.get("type").and_then(|v| v.as_str()) == Some("object") {
-                        // Check if this is an object with a single required property
-                        if let Some(Value::Array(required)) = variant_obj.get("required") {
-                            if required.len() == 1 {
-                                if let Some(prop_name) = required[0].as_str() {
-                                    prop_name.to_string()
-                                } else {
-                                    format!("Variant{}", idx)
-                                }
-                            } else {
-                                format!("Variant{}", idx)
-                            }
+    for (idx, variant_value) in one_of.iter().enumerate() {
+        let variant_result = parse_union_variant(variant_value, idx)?;
+        all_variants.extend(variant_result);
+    }
+
+    Ok(NamedType::Union(UnionType {
+        name: name.to_string(),
+        discriminator,
+        variants: all_variants,
+    }))
+}
+
+fn parse_union_variant(variant_value: &Value, idx: usize) -> Result<Vec<UnionTypeVariant>> {
+    let variant_schema = Schema::try_from(variant_value.clone())
+        .map_err(|_| anyhow::anyhow!("Invalid schema in oneOf"))?;
+
+    if let Some(variant_obj) = variant_schema.as_object() {
+        // Check if it's an enum (potentially multi-value) - do this FIRST
+        if let Some(Value::Array(enum_vals)) = variant_obj.get("enum") {
+            // Expand multi-value enums into multiple literal variants
+            let mut literal_variants = Vec::new();
+            for enum_val in enum_vals {
+                let literal = json_value_to_literal(enum_val)?;
+                let variant_name = if let LiteralType::String(s) = &literal {
+                    s.clone()
+                } else {
+                    format!("Variant{}_{}", idx, literal_variants.len())
+                };
+                literal_variants.push(UnionTypeVariant {
+                    name: Some(variant_name),
+                    mode: Box::new(UnionTypeVariantMode::Literal(literal)),
+                });
+            }
+            return Ok(literal_variants);
+        }
+
+        // Try to get a name from the title, or if it's an object with a single
+        // required property, use that property name
+        let variant_name =
+            if let Some(title) = variant_obj.get("title").and_then(|v| v.as_str()) {
+                title.to_string()
+            } else if variant_obj.get("type").and_then(|v| v.as_str()) == Some("object") {
+                // Check if this is an object with a single required property
+                if let Some(Value::Array(required)) = variant_obj.get("required") {
+                    if required.len() == 1 {
+                        if let Some(prop_name) = required[0].as_str() {
+                            prop_name.to_string()
                         } else {
                             format!("Variant{}", idx)
                         }
                     } else {
                         format!("Variant{}", idx)
-                    };
-
-                // Check if it's a literal (enum with single value) or an object
-                if let Some(Value::Array(enum_vals)) = variant_obj.get("enum") {
-                    if enum_vals.len() == 1 {
-                        let literal = json_value_to_literal(&enum_vals[0])?;
-                        return Ok(UnionTypeVariant {
-                            name: Some(variant_name),
-                            mode: Box::new(UnionTypeVariantMode::Literal(literal)),
-                        });
                     }
+                } else {
+                    format!("Variant{}", idx)
                 }
-
-                // It's an object type
-                let object_type = schema_to_object_type(&variant_name, variant_obj)?;
-                match object_type {
-                    NamedType::Object(obj) => Ok(UnionTypeVariant {
-                        name: Some(variant_name),
-                        mode: Box::new(UnionTypeVariantMode::Object(obj)),
-                    }),
-                    _ => bail!("Expected object type in union variant"),
-                }
-            } else if variant_schema.as_bool().is_some() {
-                bail!("Boolean schemas not supported in unions")
             } else {
-                bail!("Invalid schema in oneOf")
-            }
-        })
-        .collect();
+                format!("Variant{}", idx)
+            };
 
-    Ok(NamedType::Union(UnionType {
-        name: name.to_string(),
-        discriminator,
-        variants: variants?,
-    }))
+        // It's an object type
+        let object_type = schema_to_object_type(&variant_name, variant_obj)?;
+        match object_type {
+            NamedType::Object(obj) => Ok(vec![UnionTypeVariant {
+                name: Some(variant_name),
+                mode: Box::new(UnionTypeVariantMode::Object(obj)),
+            }]),
+            _ => bail!("Expected object type in union variant"),
+        }
+    } else if variant_schema.as_bool().is_some() {
+        bail!("Boolean schemas not supported in unions")
+    } else {
+        bail!("Invalid schema in oneOf")
+    }
 }
 
 fn schema_to_object_type(name: &str, schema_obj: &Map<String, Value>) -> Result<NamedType> {
@@ -160,6 +173,56 @@ fn schema_to_object_type(name: &str, schema_obj: &Map<String, Value>) -> Result<
             .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
             .unwrap_or_default();
 
+        // Special case: if this is a single-field wrapper around an inline object,
+        // unwrap it and use the inner object's fields
+        if properties.len() == 1 && required_set.len() == 1 {
+            let (field_name, field_value) = properties.iter().next().unwrap();
+            if let Some(field_obj) = field_value.as_object() {
+                if field_obj.get("type").and_then(|v| v.as_str()) == Some("object") {
+                    if let Some(Value::Object(inner_properties)) = field_obj.get("properties") {
+                        // This is a wrapper, use the inner properties instead
+                        let inner_required: std::collections::HashSet<_> = field_obj
+                            .get("required")
+                            .and_then(|v| v.as_array())
+                            .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect())
+                            .unwrap_or_default();
+
+                        for (inner_field_name, inner_field_value) in inner_properties {
+                            let is_required = inner_required.contains(inner_field_name.as_str());
+
+                            let field_schema = Schema::try_from(inner_field_value.clone())
+                                .map_err(|_| anyhow::anyhow!("Invalid field schema"))?;
+
+                            let field_type = schema_to_field_type(&field_schema)?;
+
+                            let field_type = if is_required {
+                                field_type
+                            } else {
+                                match &field_type {
+                                    FieldType::Optional(_) => field_type,
+                                    _ => FieldType::Optional(Box::new(field_type)),
+                                }
+                            };
+
+                            let constraints = extract_constraints_from_object(inner_field_value.as_object())?;
+
+                            fields.push(Field {
+                                name: inner_field_name.clone(),
+                                r#type: Box::new(field_type),
+                                constraints,
+                            });
+                        }
+
+                        return Ok(NamedType::Object(ObjectType {
+                            name: field_name.clone(),
+                            fields,
+                        }));
+                    }
+                }
+            }
+        }
+
+        // Normal case: parse all fields
         for (field_name, field_value) in properties {
             let is_required = required_set.contains(field_name.as_str());
 
@@ -169,11 +232,17 @@ fn schema_to_object_type(name: &str, schema_obj: &Map<String, Value>) -> Result<
 
             let field_type = schema_to_field_type(&field_schema)?;
 
-            // Wrap in Optional if not required
+            // Wrap in Optional if not required (but avoid double-wrapping if already Optional)
             let field_type = if is_required {
                 field_type
             } else {
-                FieldType::Optional(Box::new(field_type))
+                match &field_type {
+                    FieldType::Optional(_) => {
+                        // Already optional (nullable), don't wrap again
+                        field_type
+                    }
+                    _ => FieldType::Optional(Box::new(field_type)),
+                }
             };
 
             let constraints = extract_constraints_from_object(field_value.as_object())?;
@@ -225,6 +294,40 @@ fn schema_object_to_field_type(obj: &Map<String, Value>) -> Result<FieldType> {
             })
             .collect();
         return Ok(FieldType::Intersection(types?));
+    }
+
+    // Handle anyOf - common pattern for optional references
+    // Example: anyOf: [{ $ref: "..." }, { type: "null" }]
+    if let Some(Value::Array(any_of)) = obj.get("anyOf") {
+        // Check if this is an optional reference pattern (ref + null)
+        let mut has_ref = None;
+        let mut has_null = false;
+
+        for v in any_of {
+            if let Some(variant_obj) = v.as_object() {
+                if variant_obj.contains_key("$ref") {
+                    has_ref = Some(v.clone());
+                } else if let Some(Value::String(t)) = variant_obj.get("type") {
+                    if t == "null" {
+                        has_null = true;
+                    }
+                }
+            }
+        }
+
+        // If it's a ref + null pattern, extract the ref and make it optional
+        if let Some(ref_value) = has_ref {
+            if has_null {
+                let schema = Schema::try_from(ref_value)
+                    .map_err(|_| anyhow::anyhow!("Invalid schema in anyOf"))?;
+                let inner_type = schema_to_field_type(&schema)?;
+                return Ok(FieldType::Optional(Box::new(inner_type)));
+            }
+        }
+
+        // Otherwise treat as a union (not currently supported as inline)
+        // For now, return Any
+        return Ok(FieldType::Any);
     }
 
     // Handle nullable (supports both OpenAPI 2.0 and modern JSON Schema)
@@ -362,7 +465,9 @@ fn json_value_to_literal(value: &serde_json::Value) -> Result<LiteralType> {
     }
 }
 
-fn extract_constraints_from_object(obj: Option<&Map<String, Value>>) -> Result<Option<Constraints>> {
+fn extract_constraints_from_object(
+    obj: Option<&Map<String, Value>>,
+) -> Result<Option<Constraints>> {
     let obj = match obj {
         Some(o) => o,
         None => return Ok(None),
@@ -395,7 +500,10 @@ fn extract_constraints_from_object(obj: Option<&Map<String, Value>>) -> Result<O
         has_any = true;
     } else if let Some(min) = obj.get("minimum").and_then(|v| v.as_f64()) {
         // Check if there's a Draft 4 style boolean exclusiveMinimum
-        let is_exclusive = obj.get("exclusiveMinimum").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_exclusive = obj
+            .get("exclusiveMinimum")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if is_exclusive {
             constraints.exclusive_minimum = Some(min);
         } else {
@@ -409,7 +517,10 @@ fn extract_constraints_from_object(obj: Option<&Map<String, Value>>) -> Result<O
         constraints.exclusive_maximum = Some(exclusive_max);
         has_any = true;
     } else if let Some(max) = obj.get("maximum").and_then(|v| v.as_f64()) {
-        let is_exclusive = obj.get("exclusiveMaximum").and_then(|v| v.as_bool()).unwrap_or(false);
+        let is_exclusive = obj
+            .get("exclusiveMaximum")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
         if is_exclusive {
             constraints.exclusive_maximum = Some(max);
         } else {

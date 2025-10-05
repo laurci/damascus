@@ -1,21 +1,22 @@
-mod types;
 mod equality;
 mod schema;
+mod types;
 mod validation;
 
-pub use types::*;
 use anyhow::{Result, bail};
+use equality::types_are_structurally_equal;
+use schema::{schema_to_field_type, schema_to_type};
 use schemars::Schema;
 use serde_json::Value;
-use equality::types_are_structurally_equal;
-use schema::schema_to_type;
-use validation::{validate_references, validate_path_parameter_type};
+pub use types::*;
+use validation::{validate_path_parameter_type, validate_references};
 
 /* Abstract API Tree */
 #[derive(Debug, Clone)]
 pub struct AAT {
     pub types: Vec<NamedType>,
     pub services: Vec<Service>,
+    pub headers: Vec<Header>,
     type_names: std::collections::HashSet<String>,
 }
 
@@ -24,6 +25,7 @@ impl AAT {
         Self {
             types: vec![],
             services: vec![],
+            headers: vec![],
             type_names: std::collections::HashSet::new(),
         }
     }
@@ -42,12 +44,25 @@ impl AAT {
     pub fn import_from_spec(&mut self, spec: &crate::spec::Spec) -> Result<()> {
         use crate::spec::PathSegment as SpecPathSegment;
 
+        // Convert root-level headers
+        for (name, header_value) in spec.headers() {
+            let aat_header = self.spec_header_value_to_aat(name, header_value)?;
+            self.headers.push(aat_header);
+        }
+
         // Iterate over services
         for spec_service in spec.services() {
             let mut aat_service = Service {
                 name: spec_service.name().to_string(),
                 endpoints: vec![],
+                headers: vec![],
             };
+
+            // Convert service-level headers
+            for (name, header_value) in spec_service.headers() {
+                let aat_header = self.spec_header_value_to_aat(name, header_value)?;
+                aat_service.headers.push(aat_header);
+            }
 
             // Iterate over endpoints
             for spec_endpoint in spec_service.endpoints() {
@@ -97,6 +112,18 @@ impl AAT {
                     crate::spec::Method::Patch => HttpMethod::Patch,
                 };
 
+                // Convert endpoint-level headers
+                let mut aat_endpoint_headers = vec![];
+                for (name, header_value) in spec_endpoint.headers() {
+                    let aat_header = self.spec_header_value_to_aat(name, header_value)?;
+                    aat_endpoint_headers.push(aat_header);
+                }
+
+                // Convert upgrade if present
+                let upgrade = spec_endpoint.upgrade_type().map(|u| match u {
+                    crate::spec::Upgrade::Ws => Upgrade::Ws,
+                });
+
                 // Create AAT endpoint
                 let aat_endpoint = Endpoint {
                     name: spec_endpoint.name().to_string(),
@@ -105,6 +132,8 @@ impl AAT {
                     query: query_field_type,
                     body: body_field_type,
                     response: response_field_type,
+                    upgrade,
+                    headers: aat_endpoint_headers,
                 };
 
                 aat_service.endpoints.push(aat_endpoint);
@@ -116,14 +145,57 @@ impl AAT {
         Ok(())
     }
 
+    fn spec_header_value_to_aat(
+        &mut self,
+        name: &str,
+        header_value: &crate::spec::HeaderValue,
+    ) -> Result<Header> {
+        use crate::spec::HeaderValue as SpecHeaderValue;
+
+        let aat_value = match header_value {
+            SpecHeaderValue::Literal(lit) => HeaderValue::Literal(lit.clone()),
+            SpecHeaderValue::Type { name, r#type } => {
+                let field_type = self.spec_type_to_field_type(r#type)?;
+                HeaderValue::Parameter {
+                    name: name.clone(),
+                    field_type,
+                }
+            }
+            SpecHeaderValue::Pattern {
+                pattern,
+                name: param_name,
+                r#type,
+            } => {
+                let field_type = self.spec_type_to_field_type(r#type)?;
+                HeaderValue::Pattern {
+                    pattern: pattern.clone(),
+                    param_name: param_name.clone(),
+                    field_type,
+                }
+            }
+        };
+
+        Ok(Header {
+            name: name.to_string(),
+            value: aat_value,
+        })
+    }
+
     fn spec_type_to_field_type(&mut self, r#type: &crate::spec::Type) -> Result<FieldType> {
         use crate::spec::Type;
 
         match r#type {
             Type::Void => Ok(FieldType::Any),
             Type::Schema(schema) => {
-                let name = self.add_schema_and_get_name(schema)?;
-                Ok(FieldType::Reference(name))
+                // Check if this schema should be inlined or named
+                if should_inline_schema(schema) {
+                    // Inline primitives, arrays, maps, etc.
+                    schema_to_field_type(schema)
+                } else {
+                    // Create named types for objects, unions, enums
+                    let name = self.add_schema_and_get_name(schema)?;
+                    Ok(FieldType::Reference(name))
+                }
             }
             Type::List(inner) => {
                 let inner_type = self.spec_type_to_field_type(inner)?;
@@ -133,14 +205,21 @@ impl AAT {
                 let inner_type = self.spec_type_to_field_type(inner)?;
                 Ok(FieldType::Optional(Box::new(inner_type)))
             }
-            Type::Stream(_) => {
-                bail!("Stream types are not yet fully supported in AAT conversion. Consider using a List type or implementing streaming at the transport layer.")
+            Type::Stream(inner) => {
+                let inner_type = self.spec_type_to_field_type(inner)?;
+                Ok(FieldType::Stream(Box::new(inner_type)))
             }
-            Type::Tuple(_) => {
-                bail!("Tuple types are not yet fully supported in AAT conversion. Consider using a named struct type instead.")
+            Type::Tuple(types) => {
+                let mut field_types = Vec::new();
+                for t in types {
+                    field_types.push(self.spec_type_to_field_type(t)?);
+                }
+                Ok(FieldType::Tuple(field_types))
             }
             Type::NamedTuple(_) => {
-                bail!("NamedTuple types are not yet fully supported in AAT conversion. Consider using a named struct type instead.")
+                bail!(
+                    "NamedTuple types are not yet fully supported in AAT conversion. Consider using a named struct type instead."
+                )
             }
         }
     }
@@ -231,6 +310,29 @@ fn get_type_name(named_type: &NamedType) -> &str {
         NamedType::Object(obj) => &obj.name,
         NamedType::Union(union) => &union.name,
         NamedType::Enum(enum_type) => &enum_type.name,
+    }
+}
+
+/// Checks if a schema should be inlined (primitives, arrays, maps) or named (objects, unions, enums)
+fn should_inline_schema(schema: &Schema) -> bool {
+    if let Some(obj) = schema.as_object() {
+        // Has properties - should be a named object
+        if obj.contains_key("properties") {
+            return false;
+        }
+        // Has oneOf or anyOf - should be a named union
+        if obj.contains_key("oneOf") || obj.contains_key("anyOf") {
+            return false;
+        }
+        // Has enum - should be a named enum
+        if obj.contains_key("enum") {
+            return false;
+        }
+        // Otherwise, inline it (primitives, arrays, maps, etc.)
+        true
+    } else {
+        // Bool schemas should be inlined
+        true
     }
 }
 

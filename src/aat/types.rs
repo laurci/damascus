@@ -5,6 +5,7 @@ use std::collections::HashMap;
 pub struct Service {
     pub name: String,
     pub endpoints: Vec<Endpoint>,
+    pub headers: Vec<Header>,
 }
 
 #[derive(Debug, Clone)]
@@ -15,6 +16,36 @@ pub struct Endpoint {
     pub query: Option<FieldType>,
     pub body: Option<FieldType>,
     pub response: FieldType,
+    pub upgrade: Option<Upgrade>,
+    pub headers: Vec<Header>,
+}
+
+#[derive(Debug, Clone)]
+pub enum Upgrade {
+    Ws,
+}
+
+#[derive(Debug, Clone)]
+pub struct Header {
+    pub name: String,
+    pub value: HeaderValue,
+}
+
+#[derive(Debug, Clone)]
+pub enum HeaderValue {
+    /// A literal string value
+    Literal(String),
+    /// A dynamic value from a named parameter
+    Parameter {
+        name: String,
+        field_type: FieldType,
+    },
+    /// A pattern with a placeholder (e.g., "Bearer {token}")
+    Pattern {
+        pattern: String,
+        param_name: String,
+        field_type: FieldType,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -39,8 +70,10 @@ pub enum FieldType {
     Optional(Box<FieldType>),
     List(Box<FieldType>),
     Map(Box<FieldType>),
+    Stream(Box<FieldType>),
     Reference(String),
     Intersection(Vec<FieldType>),
+    Tuple(Vec<FieldType>),
     Any,
 }
 
@@ -114,37 +147,61 @@ impl Constraints {
         // Validate numeric constraints
         if let (Some(min), Some(max)) = (self.minimum, self.maximum) {
             if min > max {
-                anyhow::bail!("Invalid constraint: minimum ({}) must be <= maximum ({})", min, max);
+                anyhow::bail!(
+                    "Invalid constraint: minimum ({}) must be <= maximum ({})",
+                    min,
+                    max
+                );
             }
         }
         if let (Some(min), Some(max)) = (self.exclusive_minimum, self.exclusive_maximum) {
             if min >= max {
-                anyhow::bail!("Invalid constraint: exclusive_minimum ({}) must be < exclusive_maximum ({})", min, max);
+                anyhow::bail!(
+                    "Invalid constraint: exclusive_minimum ({}) must be < exclusive_maximum ({})",
+                    min,
+                    max
+                );
             }
         }
         // Cross-checks between exclusive and inclusive bounds
         if let (Some(min), Some(ex_max)) = (self.minimum, self.exclusive_maximum) {
             if min >= ex_max {
-                anyhow::bail!("Invalid constraint: minimum ({}) must be < exclusive_maximum ({})", min, ex_max);
+                anyhow::bail!(
+                    "Invalid constraint: minimum ({}) must be < exclusive_maximum ({})",
+                    min,
+                    ex_max
+                );
             }
         }
         if let (Some(ex_min), Some(max)) = (self.exclusive_minimum, self.maximum) {
             if ex_min >= max {
-                anyhow::bail!("Invalid constraint: exclusive_minimum ({}) must be < maximum ({})", ex_min, max);
+                anyhow::bail!(
+                    "Invalid constraint: exclusive_minimum ({}) must be < maximum ({})",
+                    ex_min,
+                    max
+                );
             }
         }
 
         // Validate string constraints
         if let (Some(min_len), Some(max_len)) = (self.min_length, self.max_length) {
             if min_len > max_len {
-                anyhow::bail!("Invalid constraint: minLength ({}) must be <= maxLength ({})", min_len, max_len);
+                anyhow::bail!(
+                    "Invalid constraint: minLength ({}) must be <= maxLength ({})",
+                    min_len,
+                    max_len
+                );
             }
         }
 
         // Validate array constraints
         if let (Some(min_items), Some(max_items)) = (self.min_items, self.max_items) {
             if min_items > max_items {
-                anyhow::bail!("Invalid constraint: minItems ({}) must be <= maxItems ({})", min_items, max_items);
+                anyhow::bail!(
+                    "Invalid constraint: minItems ({}) must be <= maxItems ({})",
+                    min_items,
+                    max_items
+                );
             }
         }
 

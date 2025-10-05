@@ -10,6 +10,7 @@ pub struct Spec {
     website: Option<String>,
     docs: Option<String>,
     description: Option<String>,
+    headers: BTreeMap<String, HeaderValue>,
     services: Vec<Service>,
 }
 
@@ -24,12 +25,22 @@ impl Spec {
             website: None,
             docs: None,
             description: None,
+            headers: BTreeMap::new(),
             services: vec![],
         }
     }
 
     pub fn services(&self) -> &[Service] {
         &self.services
+    }
+
+    pub fn headers(&self) -> &BTreeMap<String, HeaderValue> {
+        &self.headers
+    }
+
+    pub fn header(mut self, name: impl AsRef<str>, value: HeaderValue) -> Self {
+        self.headers.insert(name.as_ref().to_string(), value);
+        self
     }
 
     pub fn organization(mut self, organization: impl AsRef<str>) -> Self {
@@ -73,6 +84,7 @@ impl Spec {
 pub struct Service {
     name: String,
     endpoints: Vec<Endpoint>,
+    headers: BTreeMap<String, HeaderValue>,
 }
 
 impl Service {
@@ -82,6 +94,7 @@ impl Service {
         Self {
             name: name_str.to_string(),
             endpoints: vec![],
+            headers: BTreeMap::new(),
         }
     }
 
@@ -91,6 +104,15 @@ impl Service {
 
     pub fn endpoints(&self) -> &[Endpoint] {
         &self.endpoints
+    }
+
+    pub fn headers(&self) -> &BTreeMap<String, HeaderValue> {
+        &self.headers
+    }
+
+    pub fn header(mut self, name: impl AsRef<str>, value: HeaderValue) -> Self {
+        self.headers.insert(name.as_ref().to_string(), value);
+        self
     }
 
     pub fn endpoint<F: FnOnce(Endpoint) -> Endpoint>(
@@ -160,6 +182,8 @@ pub struct Endpoint {
     query: Option<Type>,
     body: Option<Type>,
     response: Type,
+    upgrade: Option<Upgrade>,
+    headers: BTreeMap<String, HeaderValue>,
 }
 
 #[derive(Debug, Clone)]
@@ -172,9 +196,28 @@ pub enum Method {
 }
 
 #[derive(Debug, Clone)]
+pub enum Upgrade {
+    Ws,
+}
+
+#[derive(Debug, Clone)]
 pub enum PathSegment {
     Literal(String),
     Type { name: String, r#type: Type },
+}
+
+#[derive(Debug, Clone)]
+pub enum HeaderValue {
+    Literal(String),
+    Type {
+        name: String,
+        r#type: Type,
+    },
+    Pattern {
+        pattern: String,
+        name: String,
+        r#type: Type,
+    },
 }
 
 impl Endpoint {
@@ -188,6 +231,8 @@ impl Endpoint {
             query: None,
             body: None,
             response: Type::Void,
+            upgrade: None,
+            headers: BTreeMap::new(),
         }
     }
 
@@ -215,6 +260,19 @@ impl Endpoint {
         &self.response
     }
 
+    pub fn upgrade_type(&self) -> Option<&Upgrade> {
+        self.upgrade.as_ref()
+    }
+
+    pub fn headers(&self) -> &BTreeMap<String, HeaderValue> {
+        &self.headers
+    }
+
+    pub fn header(mut self, name: impl AsRef<str>, value: HeaderValue) -> Self {
+        self.headers.insert(name.as_ref().to_string(), value);
+        self
+    }
+
     pub fn response(mut self, t: Type) -> Self {
         self.response = t;
         self
@@ -227,6 +285,11 @@ impl Endpoint {
 
     pub fn body(mut self, t: Type) -> Self {
         self.body = Some(t);
+        self
+    }
+
+    pub fn upgrade(mut self, upgrade: Upgrade) -> Self {
+        self.upgrade = Some(upgrade);
         self
     }
 }

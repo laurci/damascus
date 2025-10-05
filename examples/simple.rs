@@ -4,7 +4,15 @@ use damascus::{JsonSchema, aat::AAT, path, spec::Spec, type_of};
 struct AddOutput {
     a: u32,
     b: u32,
+    #[serde(rename = "output-number")]
     output: u32,
+    infos: OuputInfo,
+}
+
+#[derive(JsonSchema)]
+struct OuputInfo {
+    #[serde(rename = "output-infos")]
+    infos: Vec<String>,
 }
 
 #[derive(JsonSchema)]
@@ -65,4 +73,20 @@ fn main() {
 
     println!("\n=== AAT (Abstract API Tree) ===");
     println!("{:#?}", aat);
+
+    println!("\n=== Generating TypeScript Client ===");
+    match damascus::generate::typescript::TypeScriptGenerator::generate(&aat) {
+        Ok(ts_code) => {
+            println!("✓ Successfully generated TypeScript client");
+
+            // Write to file
+            std::fs::write("generated/client.ts", &ts_code).expect("Failed to write client.ts");
+            println!("✓ Written to generated/client.ts");
+
+            println!("\n{}", ts_code);
+        }
+        Err(e) => {
+            println!("✗ Failed to generate TypeScript client: {}", e);
+        }
+    }
 }

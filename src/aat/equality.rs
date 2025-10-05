@@ -3,15 +3,11 @@ use super::types::*;
 /// Check if two NamedTypes are structurally equal (ignoring their names)
 pub fn types_are_structurally_equal(a: &NamedType, b: &NamedType) -> bool {
     match (a, b) {
-        (NamedType::Object(a_obj), NamedType::Object(b_obj)) => {
-            objects_are_equal(a_obj, b_obj)
-        }
+        (NamedType::Object(a_obj), NamedType::Object(b_obj)) => objects_are_equal(a_obj, b_obj),
         (NamedType::Union(a_union), NamedType::Union(b_union)) => {
             unions_are_equal(a_union, b_union)
         }
-        (NamedType::Enum(a_enum), NamedType::Enum(b_enum)) => {
-            enums_are_equal(a_enum, b_enum)
-        }
+        (NamedType::Enum(a_enum), NamedType::Enum(b_enum)) => enums_are_equal(a_enum, b_enum),
         _ => false, // Different variants are not equal
     }
 }
@@ -22,11 +18,14 @@ fn objects_are_equal(a: &ObjectType, b: &ObjectType) -> bool {
     }
 
     // Fields must be in the same order with same names and types
-    a.fields.iter().zip(b.fields.iter()).all(|(a_field, b_field)| {
-        a_field.name == b_field.name
-            && field_types_are_equal(&a_field.r#type, &b_field.r#type)
-            && constraints_are_equal(&a_field.constraints, &b_field.constraints)
-    })
+    a.fields
+        .iter()
+        .zip(b.fields.iter())
+        .all(|(a_field, b_field)| {
+            a_field.name == b_field.name
+                && field_types_are_equal(&a_field.r#type, &b_field.r#type)
+                && constraints_are_equal(&a_field.constraints, &b_field.constraints)
+        })
 }
 
 fn unions_are_equal(a: &UnionType, b: &UnionType) -> bool {
@@ -36,29 +35,32 @@ fn unions_are_equal(a: &UnionType, b: &UnionType) -> bool {
 
     // Check discriminators
     match (&a.discriminator, &b.discriminator) {
-        (None, None) => {},
+        (None, None) => {}
         (Some(a_disc), Some(b_disc)) => {
             if a_disc.property_name != b_disc.property_name {
                 return false;
             }
             // Compare mappings
             match (&a_disc.mapping, &b_disc.mapping) {
-                (None, None) => {},
+                (None, None) => {}
                 (Some(a_map), Some(b_map)) => {
                     if a_map != b_map {
                         return false;
                     }
-                },
+                }
                 _ => return false,
             }
-        },
+        }
         _ => return false,
     }
 
     // Check variants
-    a.variants.iter().zip(b.variants.iter()).all(|(a_var, b_var)| {
-        a_var.name == b_var.name && variant_modes_are_equal(&a_var.mode, &b_var.mode)
-    })
+    a.variants
+        .iter()
+        .zip(b.variants.iter())
+        .all(|(a_var, b_var)| {
+            a_var.name == b_var.name && variant_modes_are_equal(&a_var.mode, &b_var.mode)
+        })
 }
 
 fn variant_modes_are_equal(a: &UnionTypeVariantMode, b: &UnionTypeVariantMode) -> bool {
@@ -78,10 +80,12 @@ fn enums_are_equal(a: &EnumType, b: &EnumType) -> bool {
         return false;
     }
 
-    a.variants.iter().zip(b.variants.iter()).all(|(a_var, b_var)| {
-        literals_are_equal(&a_var.value, &b_var.value)
-            && a_var.description == b_var.description
-    })
+    a.variants
+        .iter()
+        .zip(b.variants.iter())
+        .all(|(a_var, b_var)| {
+            literals_are_equal(&a_var.value, &b_var.value) && a_var.description == b_var.description
+        })
 }
 
 fn field_types_are_equal(a: &FieldType, b: &FieldType) -> bool {
@@ -89,9 +93,7 @@ fn field_types_are_equal(a: &FieldType, b: &FieldType) -> bool {
         (FieldType::Primitive(a_prim), FieldType::Primitive(b_prim)) => {
             primitives_are_equal(a_prim, b_prim)
         }
-        (FieldType::Literal(a_lit), FieldType::Literal(b_lit)) => {
-            literals_are_equal(a_lit, b_lit)
-        }
+        (FieldType::Literal(a_lit), FieldType::Literal(b_lit)) => literals_are_equal(a_lit, b_lit),
         (FieldType::Optional(a_inner), FieldType::Optional(b_inner)) => {
             field_types_are_equal(a_inner, b_inner)
         }
@@ -101,12 +103,23 @@ fn field_types_are_equal(a: &FieldType, b: &FieldType) -> bool {
         (FieldType::Map(a_inner), FieldType::Map(b_inner)) => {
             field_types_are_equal(a_inner, b_inner)
         }
-        (FieldType::Reference(a_ref), FieldType::Reference(b_ref)) => {
-            a_ref == b_ref
+        (FieldType::Stream(a_inner), FieldType::Stream(b_inner)) => {
+            field_types_are_equal(a_inner, b_inner)
         }
+        (FieldType::Reference(a_ref), FieldType::Reference(b_ref)) => a_ref == b_ref,
         (FieldType::Intersection(a_types), FieldType::Intersection(b_types)) => {
             a_types.len() == b_types.len()
-                && a_types.iter().zip(b_types.iter()).all(|(a, b)| field_types_are_equal(a, b))
+                && a_types
+                    .iter()
+                    .zip(b_types.iter())
+                    .all(|(a, b)| field_types_are_equal(a, b))
+        }
+        (FieldType::Tuple(a_types), FieldType::Tuple(b_types)) => {
+            a_types.len() == b_types.len()
+                && a_types
+                    .iter()
+                    .zip(b_types.iter())
+                    .all(|(a, b)| field_types_are_equal(a, b))
         }
         (FieldType::Any, FieldType::Any) => true,
         _ => false,
@@ -118,9 +131,7 @@ fn primitives_are_equal(a: &PrimitiveType, b: &PrimitiveType) -> bool {
         (PrimitiveType::Bool, PrimitiveType::Bool) => true,
         (PrimitiveType::Int, PrimitiveType::Int) => true,
         (PrimitiveType::Float, PrimitiveType::Float) => true,
-        (PrimitiveType::String(a_fmt), PrimitiveType::String(b_fmt)) => {
-            a_fmt == b_fmt
-        }
+        (PrimitiveType::String(a_fmt), PrimitiveType::String(b_fmt)) => a_fmt == b_fmt,
         _ => false,
     }
 }
