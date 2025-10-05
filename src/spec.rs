@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 
 use schemars::{JsonSchema, Schema, schema_for};
 
@@ -11,7 +11,7 @@ pub struct Spec {
     docs: Option<String>,
     description: Option<String>,
     headers: BTreeMap<String, HeaderValue>,
-    services: Vec<Service>,
+    services: HashMap<String, Service>,
 }
 
 impl Spec {
@@ -26,12 +26,12 @@ impl Spec {
             docs: None,
             description: None,
             headers: BTreeMap::new(),
-            services: vec![],
+            services: HashMap::new(),
         }
     }
 
-    pub fn services(&self) -> &[Service] {
-        &self.services
+    pub fn services(&self) -> Vec<Service> {
+        self.services.values().cloned().collect::<Vec<_>>()
     }
 
     pub fn headers(&self) -> &BTreeMap<String, HeaderValue> {
@@ -73,9 +73,13 @@ impl Spec {
         name: impl AsRef<str>,
         block: F,
     ) -> Self {
-        let service = Service::new(name);
+        // get existing service or create a new one
+        let service = match self.services.get(name.as_ref()) {
+            Some(service) => service.clone(),
+            None => Service::new(name.as_ref()),
+        };
         let service = block(service);
-        self.services.push(service);
+        self.services.insert(name.as_ref().to_string(), service);
         self
     }
 }
