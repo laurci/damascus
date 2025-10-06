@@ -89,28 +89,24 @@ fn main() {
 
 Damascus uses a universal conversion pipeline with AAT at its core:
 
-```
-┌─────────────┐
-│  Rust DSL   │───┐
-└─────────────┘   │
-                  │     ┌─────┐      ┌──────────────┐
-┌─────────────┐   ├──→  │ AAT │  →   │  TypeScript  │
-│  OpenAPI    │───┤     │     │      │    Client    │
-└─────────────┘   │     └─────┘      └──────────────┘
-                  │        │
-┌─────────────┐   │        ├──────→  ┌──────────────┐
-│  AsyncAPI   │───┘        │         │ Rust Client  │
-└─────────────┘            │         └──────────────┘
-                           │
-    (coming soon)          ├──────→  ┌──────────────┐
-                           │         │ Python Client│
-                           │         └──────────────┘
-                           │
-                           └──────→  ┌──────────────┐
-                                     │     Docs     │
-                                     └──────────────┘
+```mermaid
+graph LR
+    RustDSL[Rust DSL]
+    OpenAPI[OpenAPI<br/><i>coming soon</i>]
+    AsyncAPI[AsyncAPI<br/><i>coming soon</i>]
+    AAT[AAT<br/>Abstract API Tree]
+    TS[TypeScript Client]
+    Rust[Rust Client<br/><i>coming soon</i>]
+    Python[Python Client<br/><i>coming soon</i>]
+    Docs[Docs<br/><i>coming soon</i>]
 
-                                     (coming soon)
+    RustDSL --> AAT
+    OpenAPI --> AAT
+    AsyncAPI --> AAT
+    AAT --> TS
+    AAT --> Rust
+    AAT --> Python
+    AAT --> Docs
 ```
 
 1. **Input Converters**: Transform various API formats into AAT
