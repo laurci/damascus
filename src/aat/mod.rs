@@ -38,7 +38,23 @@ impl AAT {
     pub fn from_spec(spec: &crate::spec::Spec) -> Result<Self> {
         let mut aat = Self::new();
         aat.import_from_spec(spec)?;
+        aat.sort();
         Ok(aat)
+    }
+
+    /// Sort types, services, and endpoints alphabetically to ensure deterministic output
+    fn sort(&mut self) {
+        // Sort types by name
+        self.types
+            .sort_by(|a, b| get_type_name(a).cmp(get_type_name(b)));
+
+        // Sort services by name
+        self.services.sort_by(|a, b| a.name.cmp(&b.name));
+
+        // Sort endpoints within each service by name
+        for service in &mut self.services {
+            service.endpoints.sort_by(|a, b| a.name.cmp(&b.name));
+        }
     }
 
     pub fn import_from_spec(&mut self, spec: &crate::spec::Spec) -> Result<()> {

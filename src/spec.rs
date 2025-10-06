@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 
 use schemars::{JsonSchema, Schema, schema_for};
 
@@ -11,7 +11,7 @@ pub struct Spec {
     docs: Option<String>,
     description: Option<String>,
     headers: BTreeMap<String, HeaderValue>,
-    services: HashMap<String, Service>,
+    services: BTreeMap<String, Service>,
 }
 
 impl Spec {
@@ -26,7 +26,7 @@ impl Spec {
             docs: None,
             description: None,
             headers: BTreeMap::new(),
-            services: HashMap::new(),
+            services: BTreeMap::new(),
         }
     }
 

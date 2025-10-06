@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct Service {
@@ -232,7 +232,7 @@ pub struct UnionType {
 #[derive(Debug, Clone)]
 pub struct Discriminator {
     pub property_name: String,
-    pub mapping: Option<HashMap<String, String>>,
+    pub mapping: Option<BTreeMap<String, String>>,
 }
 
 #[derive(Debug, Clone)]

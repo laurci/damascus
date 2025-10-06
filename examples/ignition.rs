@@ -273,6 +273,45 @@ fn main() {
                             .header("x-ignition-namespace", header_value!(namespace: String))
                     },
                 )
+        })
+        .service("volumes", |service| {
+            service
+                .get("get", path!("volumes", name: String), |endpoint| {
+                    endpoint.response(type_of!(MachineVolumeBinding))
+                })
+                .get("list", path!("volumes"), |endpoint| {
+                    endpoint.response(type_of!(MachineVolumeBinding).wrap_list())
+                })
+                .post("create", path!("volumes"), |endpoint| {
+                    endpoint.body(type_of!(MachineVolumeBinding))
+                })
+                .delete("delete", path!("volumes", name: String), |endpoint| {
+                    endpoint
+                })
+        })
+        .service("auth", |service| {
+            service
+                .post("login", path!("auth", "login"), |endpoint| {
+                    endpoint.response(type_of!(String))
+                })
+                .post("logout", path!("auth", "logout"), |endpoint| {
+                    endpoint
+                })
+        })
+        .service("billing", |service| {
+            service
+                .get("usage", path!("billing", "usage"), |endpoint| {
+                    endpoint.response(type_of!(MachineResources))
+                })
+        })
+        .service("admin", |service| {
+            service
+                .get("status", path!("admin", "status"), |endpoint| {
+                    endpoint.response(type_of!(Status))
+                })
+                .get("logs", path!("admin", "logs"), |endpoint| {
+                    endpoint.response(type_of!(Log).wrap_list())
+                })
         });
 
     println!("=== Converting Spec to AAT ===");
